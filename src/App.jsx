@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   Upload, 
   FileText, 
@@ -6,77 +7,47 @@ import {
   AlertCircle, 
   ArrowRightLeft, 
   Loader2, 
-  Table as TableIcon,
-  Search,
-  DollarSign,
-  Download,
-  History,
-  Trash2,
-  Plus,
-  ChevronRight,
-  Settings,
-  Database,
-  Save,
-  ShieldCheck,
-  ShieldAlert,
+  Search, 
+  Download, 
+  History, 
+  Trash2, 
+  Plus, 
+  ChevronRight, 
+  Database, 
+  Save, 
+  Camera, 
+  ChevronUp, 
+  ChevronDown, 
+  Globe, 
+  Lock,
   Zap,
-  Camera,
-  ChevronUp,
-  ChevronDown,
-  Globe,
-  Lock
+  LayoutDashboard,
+  FileSearch,
+  Settings as SettingsIcon,
+  Sparkles
 } from 'lucide-react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
+import { onAuthStateChanged, signInAnonymously } from 'firebase/auth';
+import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
+import { GoogleGenAI } from "@google/genai";
+import { auth, db, appId } from './firebase';
 
-// --- 1. CONFIGURACIÓN DE FIREBASE (TU BASE DE DATOS) ---
-const firebaseConfig = {
-  apiKey: "AIzaSyD6D-lq0fEt5th1u9kuZci9QmLpUkJFLJc",
-  authDomain: "validador-facturas.firebaseapp.com",
-  projectId: "validador-facturas",
-  storageBucket: "validador-facturas.firebasestorage.app",
-  messagingSenderId: "755125519165",
-  appId: "1:755125519165:web:d8549562aa396d12db7b54"
-};
-
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = 'validador-facturas'; 
-
-// --- 2. CONFIGURACIÓN DE INTELIGENCIA ARTIFICIAL Y SEGURIDAD ---
-const geminiApiKey = "AIzaSyBeqM1jz5wY9DcgL_JP8d2fHlKtN4jcikM"; 
-
-// 🔥 CAMBIA ESTA CONTRASEÑA POR LA QUE TÚ QUIERAS USAR COMO ADMINISTRADOR
-const ADMIN_SECRET = "Admin123*"; 
-
-// Datos iniciales por defecto
-const DEFAULT_MAPPINGS = [
-  {
-    id: 'base-alpina-default',
-    name: 'ALPINA (EJEMPLO)',
-    items: [
-      { sap: "2898", prov: "4196", nombreSap: "PRODUCTO 2898", nombreProv: "PROV 4196" },
-      { sap: "3858", prov: "1014", nombreSap: "QUESO SABANA INST 25 TAJ 417G ALPINA", nombreProv: "Q SABA INST 25 TAJ 417G" }
-    ]
-  }
-];
+// --- CONFIGURACIÓN DE SEGURIDAD ---
+const ADMIN_SECRET = process.env.ADMIN_SECRET || "Admin123*"; 
 
 export default function App() {
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState<any>(null);
   const [activeTab, setActiveTab] = useState('compare');
   
-  const [invoiceImage, setInvoiceImage] = useState(null);
-  const [poImage, setPoImage] = useState(null);
+  const [invoiceImage, setInvoiceImage] = useState<File | null>(null);
+  const [poImage, setPoImage] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [results, setResults] = useState(null);
-  const [error, setError] = useState(null);
+  const [results, setResults] = useState<any[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [isFormCollapsed, setIsFormCollapsed] = useState(false);
   
-  const [publicMappings, setPublicMappings] = useState([]);
-  const [privateMappings, setPrivateMappings] = useState([]);
-  const [history, setHistory] = useState([]);
+  const [publicMappings, setPublicMappings] = useState<any[]>([]);
+  const [privateMappings, setPrivateMappings] = useState<any[]>([]);
+  const [history, setHistory] = useState<any[]>([]);
   
   const [selectedMappingId, setSelectedMappingId] = useState('');
   const [newBaseName, setNewBaseName] = useState('');
@@ -91,22 +62,16 @@ export default function App() {
   useEffect(() => {
     const initAuth = async () => {
       try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          try {
-            await signInWithCustomToken(auth, __initial_auth_token);
-          } catch (tokenError) {
-            console.warn("Usando base de datos propia, iniciando sesión anónima...", tokenError);
-            await signInAnonymously(auth);
-          }
-        } else {
-          await signInAnonymously(auth);
-        }
+        // En este entorno, preferimos inicio anónimo si no hay token personalizado
+        await signInAnonymously(auth);
       } catch (err) {
         console.error("Error de autenticación:", err);
       }
     };
     initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setUser);
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+    });
     return () => unsubscribe();
   }, []);
 
@@ -128,13 +93,13 @@ export default function App() {
 
     const histRef = collection(db, 'artifacts', appId, 'users', user.uid, 'history');
     const unsubHist = onSnapshot(histRef, (snap) => {
-      const data = snap.docs.map(d => ({...d.data(), id: d.id}));
-      data.sort((a, b) => b.timestamp - a.timestamp);
+      const data = snap.docs.map(d => ({...d.data(), id: d.id})) as any[];
+      data.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
       setHistory(data);
     }, (err) => console.error("Error Firebase Historial:", err));
 
     return () => { unsubPub(); unsubPriv(); unsubHist(); };
-  }, [user, appId]);
+  }, [user]);
 
   useEffect(() => {
     if (!selectedMappingId && allMappings.length > 0) {
@@ -142,10 +107,13 @@ export default function App() {
     }
   }, [allMappings, selectedMappingId]);
 
-  const fileToBase64 = (file) => new Promise((resolve, reject) => {
+  const fileToBase64 = (file: File): Promise<string> => new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.readAsDataURL(file);
-    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onload = () => {
+      const result = reader.result as string;
+      resolve(result.split(',')[1]);
+    };
     reader.onerror = (e) => reject(e);
   });
 
@@ -155,7 +123,6 @@ export default function App() {
       return;
     }
     
-    // 🔥 VALIDACIÓN DE ADMINISTRADOR
     if (isPublicBase && adminPassword !== ADMIN_SECRET) {
       setError("Clave de Administrador incorrecta. Solo el administrador puede crear bases públicas.");
       return;
@@ -201,16 +168,16 @@ export default function App() {
       setSelectedMappingId(mappingId);
       setNewBaseName('');
       setPasteData('');
-      setAdminPassword(''); // Limpiar contraseña tras el éxito
+      setAdminPassword(''); 
       setError(null);
       alert(`¡Base de datos ${newMapping.name} guardada exitosamente!`);
     } catch (err) {
       console.error(err);
-      setError("Hubo un error al guardar en la base de datos de la nube. Revisa las reglas de seguridad de Firestore.");
+      setError("Hubo un error al guardar en la base de datos de la nube.");
     }
   };
 
-  const deleteMapping = async (mapping) => {
+  const deleteMapping = async (mapping: any) => {
     if (!user) return;
     if (window.confirm(`¿Seguro que deseas eliminar la base de datos "${mapping.name}"?`)) {
       try {
@@ -224,38 +191,6 @@ export default function App() {
         console.error(err);
         alert("Error al intentar eliminar la base.");
       }
-    }
-  };
-
-  const callGeminiWithRetry = async (payload, retries = 2, delay = 1000) => {
-    const isLocalEnv = geminiApiKey && geminiApiKey.trim() !== "";
-    const selectedModel = isLocalEnv ? "gemini-1.5-pro" : "gemini-2.5-flash-preview-09-2025";
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${geminiApiKey}`;
-    
-    for (let i = 0; i <= retries; i++) {
-      try {
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        
-        if (response.ok) return await response.json();
-        
-        const errorData = await response.json().catch(() => ({}));
-        const errorMsg = errorData.error?.message || `Código ${response.status}`;
-        
-        if (response.status === 401) {
-           throw new Error(`Error 401: La Clave de IA (Gemini) es inválida. Asegúrate de no haber pegado la clave de Firebase por error en la variable geminiApiKey.`);
-        }
-        if (response.status >= 400 && response.status < 500) {
-           throw new Error(`Rechazado por IA: ${errorMsg}`);
-        }
-        throw new Error(`Error de red: ${response.status}`);
-      } catch (err) {
-        if (i === retries || err.message.includes('FALTA') || err.message.includes('Rechazado') || err.message.includes('401')) throw err;
-      }
-      await new Promise(r => setTimeout(r, delay * Math.pow(2, i)));
     }
   };
 
@@ -273,11 +208,14 @@ export default function App() {
     setError(null);
 
     try {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) throw new Error("GEMINI_API_KEY no configurada.");
+      
+      const ai = new GoogleGenAI({ apiKey });
       const invoiceBase64 = await fileToBase64(invoiceImage);
       const poBase64 = await fileToBase64(poImage);
       const activeMapping = allMappings.find(m => m.id === selectedMappingId) || { items: [] };
 
-      // PROMPT ULTRA-GUIADO Y CORREGIDO PARA LA COLUMNA DE PRECIO
       const prompt = `
         Eres un asistente estricto de extracción de datos. Analiza la FACTURA y la ORDEN DE COMPRA adjuntas.
         
@@ -295,45 +233,35 @@ export default function App() {
         2. Extrae TODAS las filas de TODAS las páginas de ambos documentos. 
         3. NO INVENTES NÚMEROS. Limpia los puntos de miles (ej. 1.272.000 -> 1272000).
         
-        Devuelve ESTRICTAMENTE este JSON puro SIN Markdown alrededor:
+        Devuelve ESTRICTAMENTE este JSON puro:
         {
           "factura": [{ "codProducto": "string", "descripcion": "string", "cantidad": 0, "totalBruto": 0, "descuento": 0 }],
           "ordenCompra": [{ "codSap": "string", "nombreMaterial": "string", "cantidad": 0, "precioUnitario": 0 }]
         }
       `;
 
-      const payload = {
-        contents: [{
-          role: "user",
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: {
           parts: [
             { text: prompt },
             { inlineData: { mimeType: invoiceImage.type, data: invoiceBase64 } },
             { inlineData: { mimeType: poImage.type, data: poBase64 } }
           ]
-        }],
-        generationConfig: {
-          temperature: 0.1, 
+        },
+        config: {
+          temperature: 0.1,
           responseMimeType: "application/json"
         }
-      };
+      });
 
-      const data = await callGeminiWithRetry(payload);
-      const textResponse = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      
-      if (!textResponse) throw new Error("La IA no devolvió datos. Intenta nuevamente.");
+      const textResponse = response.text;
+      if (!textResponse) throw new Error("La IA no devolvió datos.");
 
-      let cleanJson = textResponse;
-      const jsonMatch = textResponse.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        cleanJson = jsonMatch[0];
-      } else {
-        cleanJson = textResponse.replace(/```json|```/g, "").trim();
-      }
-
-      const parsedData = JSON.parse(cleanJson);
+      const parsedData = JSON.parse(textResponse);
       
       if (!parsedData.factura || parsedData.factura.length === 0) {
-         throw new Error("La IA analizó el documento pero no logró extraer los productos. Por favor revisa la legibilidad del PDF.");
+         throw new Error("La IA analizó el documento pero no logró extraer los productos.");
       }
 
       const comp = compareData(parsedData, activeMapping.items);
@@ -341,7 +269,7 @@ export default function App() {
       await addToHistory(comp, activeMapping.name || "Base Temporal");
       setIsFormCollapsed(true); 
 
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
       setError("❌ " + err.message);
     } finally {
@@ -349,16 +277,15 @@ export default function App() {
     }
   };
 
-  const compareData = (data, mappingItems) => {
+  const compareData = (data: any, mappingItems: any[]) => {
     const { factura = [], ordenCompra = [] } = data;
     
-    // Función auxiliar para limpiar códigos
-    const cleanSKU = (sku) => {
+    const cleanSKU = (sku: any) => {
       const s = String(sku || "").trim().toUpperCase().replace(/\s+/g, '').replace(/^0+/, '');
       return s === "" ? "0" : s;
     };
 
-    return factura.map(itemProv => {
+    return factura.map((itemProv: any) => {
       const cleanProv = cleanSKU(itemProv.codProducto);
       
       let mapping = mappingItems.find(m => cleanSKU(m.prov) === cleanProv);
@@ -368,14 +295,14 @@ export default function App() {
         const mapBySap = mappingItems.find(m => cleanSKU(m.sap) === cleanProv);
         if (mapBySap) {
           mapping = mapBySap;
-          const existsProvInOC = ordenCompra.some(oc => cleanSKU(oc.codSap) === cleanSKU(mapBySap.prov));
+          const existsProvInOC = ordenCompra.some((oc: any) => cleanSKU(oc.codSap) === cleanSKU(mapBySap.prov));
           sapSku = existsProvInOC ? mapBySap.prov : mapBySap.sap;
         }
       }
 
       if (!sapSku) sapSku = "No Homologado";
       
-      const itemPo = ordenCompra.find(oc => cleanSKU(oc.codSap) === cleanSKU(sapSku));
+      const itemPo = ordenCompra.find((oc: any) => cleanSKU(oc.codSap) === cleanSKU(sapSku));
       
       const bruto = parseFloat(String(itemProv.totalBruto).replace(/,/g, '')) || 0;
       const desc = parseFloat(String(itemProv.descuento).replace(/,/g, '')) || 0;
@@ -447,7 +374,7 @@ export default function App() {
     });
   };
 
-  const addToHistory = async (res, provider) => {
+  const addToHistory = async (res: any[], provider: string) => {
     if (!user) return;
     const histId = `hist-${Date.now()}`;
     
@@ -468,7 +395,7 @@ export default function App() {
     }
   };
 
-  const exportCSV = (data) => {
+  const exportCSV = (data: any[]) => {
     const headers = [
       "Cod Prov", "SKU SAP", "Descripcion", "Cant Factura", "Multiplicador", 
       "Total Unds", "Cant OC SAP", "Dif Cantidad", "P. Fact Real Und", "P. OC SAP", "Dif Precio", "Método Detección"
@@ -485,376 +412,440 @@ export default function App() {
     link.click();
   };
 
-  const UploadCard = ({ title, fileData, setFileData, colorTheme, icon: Icon }) => (
-    <div className={`bg-white p-6 rounded-[2.5rem] border-2 border-dashed transition-all ${fileData ? `border-${colorTheme}-500 bg-${colorTheme}-50/30` : 'border-slate-200'} flex flex-col justify-center`}>
-      <div className={`w-16 h-16 rounded-3xl mx-auto mb-4 flex items-center justify-center ${fileData ? `bg-${colorTheme}-600 text-white shadow-lg` : 'bg-slate-100 text-slate-400'}`}>
+  const UploadCard = ({ title, fileData, setFileData, colorTheme, icon: Icon }: any) => (
+    <motion.div 
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className={`glass-card p-6 rounded-[2rem] border-2 border-dashed transition-all ${fileData ? `border-${colorTheme}-500/50 bg-${colorTheme}-500/5` : 'border-zinc-800'} flex flex-col justify-center relative overflow-hidden group`}
+    >
+      {fileData && (
+        <div className={`absolute top-0 right-0 p-2 bg-${colorTheme}-500/20 text-${colorTheme}-400 rounded-bl-2xl`}>
+          <CheckCircle2 size={16} />
+        </div>
+      )}
+      <div className={`w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center transition-transform group-hover:scale-110 duration-300 ${fileData ? `bg-${colorTheme}-500/20 text-${colorTheme}-400 shadow-[0_0_20px_rgba(59,130,246,0.2)]` : 'bg-zinc-800 text-zinc-500'}`}>
         <Icon size={32} />
       </div>
-      <h3 className="font-black text-lg text-center mb-4">{title}</h3>
+      <h3 className="font-bold text-lg text-center mb-4 text-zinc-200">{title}</h3>
       
       {fileData ? (
         <div className="flex flex-col items-center">
-          <p className={`text-xs font-bold text-${colorTheme}-700 truncate max-w-[200px] bg-${colorTheme}-100 py-1 px-3 rounded-full mb-3`}>
+          <p className={`text-xs font-medium text-${colorTheme}-400 truncate max-w-[200px] bg-${colorTheme}-500/10 py-1.5 px-4 rounded-full mb-3 border border-${colorTheme}-500/20`}>
             {fileData.name}
           </p>
-          <button onClick={() => setFileData(null)} className="text-xs text-red-500 font-bold hover:underline">Quitar y volver a subir</button>
+          <button onClick={() => setFileData(null)} className="text-xs text-red-400/70 font-bold hover:text-red-400 transition-colors">Quitar y volver a subir</button>
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-2 mt-auto">
-          <label className="cursor-pointer bg-slate-100 hover:bg-slate-200 text-slate-700 py-3 px-2 rounded-2xl flex flex-col items-center justify-center gap-1 transition-colors">
+        <div className="grid grid-cols-2 gap-3 mt-auto">
+          <label className="cursor-pointer bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-3 px-2 rounded-xl flex flex-col items-center justify-center gap-1 transition-all active:scale-95">
             <Upload size={18} />
-            <span className="text-[10px] font-black uppercase">Archivo</span>
-            <input type="file" className="hidden" accept="image/*,application/pdf" onChange={(e) => { if(e.target.files[0]) setFileData(e.target.files[0]) }} />
+            <span className="text-[10px] font-bold uppercase tracking-wider">Archivo</span>
+            <input type="file" className="hidden" accept="image/*,application/pdf" onChange={(e) => { if(e.target.files?.[0]) setFileData(e.target.files[0]) }} />
           </label>
-          <label className={`cursor-pointer bg-${colorTheme}-600 hover:bg-${colorTheme}-700 text-white py-3 px-2 rounded-2xl flex flex-col items-center justify-center gap-1 shadow-md transition-colors`}>
+          <label className={`cursor-pointer bg-${colorTheme}-600/20 hover:bg-${colorTheme}-600/30 text-${colorTheme}-400 border border-${colorTheme}-500/30 py-3 px-2 rounded-xl flex flex-col items-center justify-center gap-1 transition-all active:scale-95`}>
             <Camera size={18} />
-            <span className="text-[10px] font-black uppercase">Cámara</span>
-            <input type="file" className="hidden" accept="image/*" capture="environment" onChange={(e) => { if(e.target.files[0]) setFileData(e.target.files[0]) }} />
+            <span className="text-[10px] font-bold uppercase tracking-wider">Cámara</span>
+            <input type="file" className="hidden" accept="image/*" capture="environment" onChange={(e) => { if(e.target.files?.[0]) setFileData(e.target.files[0]) }} />
           </label>
         </div>
       )}
-    </div>
+    </motion.div>
   );
 
   return (
-    <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-800">
+    <div className="min-h-screen bg-zinc-950 p-4 md:p-8 font-sans text-zinc-300 selection:bg-electric-blue/30">
+      {/* Background Glow */}
+      <div className="fixed top-0 left-0 w-full h-full overflow-hidden -z-10 pointer-events-none">
+        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-electric-blue/10 blur-[120px] rounded-full"></div>
+        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-neon-violet/10 blur-[120px] rounded-full"></div>
+      </div>
+
       <div className="max-w-7xl mx-auto">
-        
-        <div className="flex flex-wrap gap-2 mb-8 bg-white p-2 rounded-2xl shadow-sm border w-fit">
-          <button onClick={() => setActiveTab('compare')} className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${activeTab === 'compare' ? 'bg-slate-800 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
-            <ArrowRightLeft size={18} /> Conciliar
-          </button>
-          <button onClick={() => setActiveTab('history')} className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${activeTab === 'history' ? 'bg-slate-800 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
-            <History size={18} /> Historial
-          </button>
-          <button onClick={() => setActiveTab('settings')} className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${activeTab === 'settings' ? 'bg-slate-800 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
-            <Database size={18} /> Bases de Homólogos
-          </button>
+        {/* Navigation Bar */}
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-12 glass-card p-2 rounded-2xl border-zinc-800/50">
+          <div className="flex items-center gap-3 px-4">
+            <div className="w-10 h-10 rounded-xl animate-gradient flex items-center justify-center shadow-lg">
+              <Sparkles className="text-white" size={20} />
+            </div>
+            <span className="font-black text-xl tracking-tighter text-white">CONCILIADOR<span className="text-electric-blue">.AI</span></span>
+          </div>
+          
+          <div className="flex gap-1">
+            {[
+              { id: 'compare', icon: ArrowRightLeft, label: 'Conciliar' },
+              { id: 'history', icon: History, label: 'Historial' },
+              { id: 'settings', icon: Database, label: 'Bases' }
+            ].map((tab) => (
+              <button 
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)} 
+                className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-bold transition-all relative ${activeTab === tab.id ? 'text-white' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50'}`}
+              >
+                {activeTab === tab.id && (
+                  <motion.div layoutId="activeTab" className="absolute inset-0 bg-zinc-800 rounded-xl -z-10" />
+                )}
+                <tab.icon size={18} className={activeTab === tab.id ? 'text-electric-blue' : ''} /> 
+                <span className="hidden sm:inline">{tab.label}</span>
+              </button>
+            ))}
+          </div>
         </div>
 
-        {activeTab === 'compare' && (
-          <div className="animate-in fade-in duration-500">
-            <header className="mb-6 flex justify-between items-end">
-              <div>
-                <h1 className="text-3xl font-black text-slate-900 tracking-tight">Conciliador Inteligente</h1>
-                <p className="text-slate-500">Cruza precios y cantidades con tolerancia automática a cajas</p>
-              </div>
-              {results && (
-                <button 
-                  onClick={() => setIsFormCollapsed(!isFormCollapsed)}
-                  className="bg-white border shadow-sm px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 text-slate-600 hover:bg-slate-50"
-                >
-                  {isFormCollapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
-                  {isFormCollapsed ? 'Mostrar Carga' : 'Ocultar Carga'}
-                </button>
-              )}
-            </header>
+        <AnimatePresence mode="wait">
+          {activeTab === 'compare' && (
+            <motion.div 
+              key="compare"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+              className="space-y-8"
+            >
+              <header className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+                <div>
+                  <h1 className="text-4xl font-black text-white tracking-tight mb-2">Panel de Conciliación</h1>
+                  <p className="text-zinc-500 max-w-xl">Extracción inteligente de datos con Gemini 3.1 Flash. Cruce de precios y cantidades con tolerancia automática.</p>
+                </div>
+                {results && (
+                  <button 
+                    onClick={() => setIsFormCollapsed(!isFormCollapsed)}
+                    className="glass-card px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 text-zinc-400 hover:text-white transition-all border-zinc-800"
+                  >
+                    {isFormCollapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+                    {isFormCollapsed ? 'Mostrar Carga' : 'Ocultar Carga'}
+                  </button>
+                )}
+              </header>
 
-            {!isFormCollapsed && (
-              <div className="animate-in slide-in-from-top-4 duration-300 mb-8">
-                <div className="bg-white p-5 rounded-3xl border shadow-sm mb-6 flex flex-col md:flex-row md:items-center gap-6">
-                  <div className="flex items-center gap-3 flex-1">
-                    <div className="p-3 bg-blue-100 text-blue-600 rounded-2xl">
-                      <Database size={24} />
-                    </div>
-                    <div className="w-full">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Base de Datos Activa:</label>
-                      <select 
-                        value={selectedMappingId} 
-                        onChange={(e) => setSelectedMappingId(e.target.value)}
-                        className="block w-full bg-slate-50 border border-slate-100 p-2 rounded-xl font-bold text-slate-800 outline-none cursor-pointer mt-1"
-                      >
-                        <optgroup label="🌐 Bases Compartidas (Empresa)">
-                          {publicMappings.map(m => <option key={m.id} value={m.id}>{m.name} ({m.items.length})</option>)}
-                        </optgroup>
-                        <optgroup label="🔒 Bases Privadas (Solo tú)">
-                          {privateMappings.map(m => <option key={m.id} value={m.id}>{m.name} ({m.items.length})</option>)}
-                        </optgroup>
-                      </select>
+              {!isFormCollapsed && (
+                <div className="space-y-6">
+                  <div className="glass-card p-6 rounded-3xl border-zinc-800/50 flex flex-col md:flex-row md:items-center gap-6">
+                    <div className="flex items-center gap-4 flex-1">
+                      <div className="p-3 bg-electric-blue/10 text-electric-blue rounded-2xl border border-electric-blue/20">
+                        <Database size={24} />
+                      </div>
+                      <div className="w-full">
+                        <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1 block">Base de Datos Activa</label>
+                        <select 
+                          value={selectedMappingId} 
+                          onChange={(e) => setSelectedMappingId(e.target.value)}
+                          className="block w-full bg-zinc-800/50 border border-zinc-700 p-2.5 rounded-xl font-bold text-white outline-none cursor-pointer focus:border-electric-blue/50 transition-all"
+                        >
+                          <optgroup label="🌐 Bases Compartidas">
+                            {publicMappings.map(m => <option key={m.id} value={m.id}>{m.name} ({m.items.length})</option>)}
+                          </optgroup>
+                          <optgroup label="🔒 Bases Privadas">
+                            {privateMappings.map(m => <option key={m.id} value={m.id}>{m.name} ({m.items.length})</option>)}
+                          </optgroup>
+                        </select>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="grid md:grid-cols-2 gap-6 mb-6">
-                  <UploadCard title="Factura Proveedor" fileData={invoiceImage} setFileData={setInvoiceImage} colorTheme="blue" icon={FileText} />
-                  <UploadCard title="Orden SAP" fileData={poImage} setFileData={setPoImage} colorTheme="green" icon={Search} />
-                </div>
+                  <div className="grid md:grid-cols-2 gap-6">
+                    <UploadCard title="Factura Proveedor" fileData={invoiceImage} setFileData={setInvoiceImage} colorTheme="blue" icon={FileText} />
+                    <UploadCard title="Orden SAP" fileData={poImage} setFileData={setPoImage} colorTheme="violet" icon={Search} />
+                  </div>
 
-                <button
-                  onClick={processImages}
-                  disabled={isProcessing || !invoiceImage || !poImage || (!selectedMappingId && allMappings.length === 0)}
-                  className="w-full bg-slate-900 hover:bg-blue-600 disabled:bg-slate-200 text-white py-5 rounded-3xl font-black text-xl shadow-2xl transition-all flex items-center justify-center gap-4"
+                  <motion.button
+                    whileHover={{ scale: 1.01 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={processImages}
+                    disabled={isProcessing || !invoiceImage || !poImage || (!selectedMappingId && allMappings.length === 0)}
+                    className="w-full animate-gradient text-white py-5 rounded-3xl font-black text-xl shadow-2xl transition-all flex items-center justify-center gap-4 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isProcessing ? (
+                      <><Loader2 className="animate-spin" /> <span className="animate-pulse">Analizando con Flash AI...</span></>
+                    ) : (
+                      <><Zap size={24} className="fill-current" /> Iniciar Conciliación</>
+                    )}
+                  </motion.button>
+
+                  {error && (
+                    <motion.div 
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="bg-red-500/10 border border-red-500/20 text-red-400 p-6 rounded-3xl flex items-center gap-4"
+                    >
+                      <AlertCircle size={32} className="shrink-0" /> 
+                      <p className="font-bold">{error}</p>
+                    </motion.div>
+                  )}
+                </div>
+              )}
+
+              {results && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="space-y-6"
                 >
-                  {isProcessing ? <><Loader2 className="animate-spin" /> Procesando Extracción Estricta...</> : <><CheckCircle2 size={24} /> Validar Ahora</>}
-                </button>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {[
+                      { label: 'Total Items', value: results.length, color: 'zinc' },
+                      { label: 'Conciliados', value: results.filter(r => !r.tieneDiferencia).length, color: 'emerald' },
+                      { label: 'Dif. Cantidad', value: results.filter(r => r.tieneDifCant).length, color: 'orange' },
+                      { label: 'Dif. Precio', value: results.filter(r => r.tieneDifPrecio).length, color: 'red' }
+                    ].map((stat, i) => (
+                      <div key={i} className="glass-card p-5 rounded-3xl border-zinc-800/50">
+                        <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">{stat.label}</p>
+                        <p className={`text-3xl font-black text-${stat.color}-400 leading-none`}>{stat.value}</p>
+                      </div>
+                    ))}
+                  </div>
 
-                {error && (
-                  <div className="bg-red-50 border-2 border-red-100 text-red-600 p-6 rounded-3xl mt-6 flex items-center gap-4">
-                    <AlertCircle size={32} className="shrink-0" /> <p className="font-bold">{error}</p>
+                  <div className="glass-card rounded-[2.5rem] border-zinc-800/50 overflow-hidden">
+                    <div className="p-6 md:p-8 border-b border-zinc-800 flex flex-col sm:flex-row justify-between items-center gap-4">
+                      <h2 className="text-xl font-black text-white">Resultados del Cruce</h2>
+                      <button onClick={() => exportCSV(results)} className="bg-zinc-800 hover:bg-zinc-700 text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 border border-zinc-700 transition-all text-sm">
+                        <Download size={18} /> Exportar Excel
+                      </button>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left min-w-[1000px]">
+                        <thead className="bg-zinc-900/50 text-[10px] font-black text-zinc-500 uppercase tracking-widest">
+                          <tr>
+                            <th className="px-6 py-5">Identificación</th>
+                            <th className="px-6 py-5">Descripción</th>
+                            <th className="px-6 py-5 text-center">Cant. Fact</th>
+                            <th className="px-6 py-5 text-center">Ajuste</th>
+                            <th className="px-6 py-5 text-center">Total Real</th>
+                            <th className="px-6 py-5 text-center">Cant. OC</th>
+                            <th className="px-6 py-5 text-center">Dif. Cant</th>
+                            <th className="px-6 py-5 text-right">P. Real</th>
+                            <th className="px-6 py-5 text-right">P. OC</th>
+                            <th className="px-6 py-5 text-right">Dif. Precio</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-800">
+                          {results.map((row, i) => (
+                            <tr key={i} className={`hover:bg-zinc-800/30 transition-colors ${row.tieneDiferencia ? 'bg-red-500/5' : ''}`}>
+                              <td className="px-6 py-5">
+                                <div className={`font-black text-sm ${row.sapSku === 'No Homologado' ? 'text-orange-400' : 'text-zinc-200'}`}>{row.sapSku}</div>
+                                <div className="text-[10px] text-zinc-500">Prov: {row.codProducto}</div>
+                              </td>
+                              <td className="px-6 py-5 max-w-[200px]">
+                                <div className="text-[11px] font-black text-electric-blue truncate mb-1">OC: {row.nombreSap}</div>
+                                <div className="text-xs text-zinc-400 leading-tight line-clamp-2">FAC: {row.descripcion}</div>
+                              </td>
+                              <td className="px-6 py-5 text-center font-bold text-zinc-500">{row.cantFacturaOriginal}</td>
+                              <td className="px-6 py-5 text-center">
+                                {row.multiplicador > 1 ? (
+                                  <span className="inline-flex items-center gap-1 bg-neon-violet/20 text-neon-violet px-2 py-1 rounded-lg text-[10px] font-black border border-neon-violet/20">
+                                    <Zap size={10} /> x{row.multiplicador}
+                                  </span>
+                                ) : <span className="text-zinc-700">-</span>}
+                              </td>
+                              <td className="px-6 py-5 text-center font-black text-zinc-200">{row.cantRealTotal}</td>
+                              <td className="px-6 py-5 text-center font-bold text-zinc-400">{row.cantSAP}</td>
+                              <td className="px-6 py-5 text-center font-black">
+                                {row.diferenciaCantidad > 0 ? (
+                                  <span className="text-red-400 text-xs">+ {row.diferenciaCantidad}</span>
+                                ) : row.diferenciaCantidad < 0 ? (
+                                  <span className="text-orange-400 text-xs">{row.diferenciaCantidad}</span>
+                                ) : (
+                                  <CheckCircle2 size={16} className="mx-auto text-emerald-500" />
+                                )}
+                              </td>
+                              <td className="px-6 py-5 text-right font-black text-zinc-200">
+                                ${row.precioFacturaReal.toLocaleString(undefined, {minimumFractionDigits: 2})}
+                              </td>
+                              <td className="px-6 py-5 text-right text-zinc-500 font-bold">
+                                ${row.precioOC.toLocaleString(undefined, {minimumFractionDigits: 2})}
+                              </td>
+                              <td className={`px-6 py-5 text-right font-black ${row.tieneDifPrecio ? 'text-red-400' : 'text-emerald-400'}`}>
+                                ${row.diferenciaPrecio.toLocaleString(undefined, {minimumFractionDigits: 2})}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </motion.div>
+          )}
+
+          {activeTab === 'history' && (
+            <motion.div 
+              key="history"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="space-y-8"
+            >
+              <h1 className="text-4xl font-black text-white tracking-tight">Historial de Auditoría</h1>
+              <div className="grid gap-4">
+                {history.map(entry => (
+                  <div key={entry.id} className="glass-card p-6 rounded-3xl border-zinc-800/50 flex flex-col md:flex-row md:items-center justify-between hover:border-electric-blue/30 transition-all gap-4 group">
+                    <div>
+                      <h4 className="font-black text-white uppercase text-lg group-hover:text-electric-blue transition-colors">{entry.provider}</h4>
+                      <p className="text-xs text-zinc-500 font-medium">{entry.date}</p>
+                    </div>
+                    <div className="flex items-center gap-6 bg-zinc-900/50 px-6 py-3 rounded-2xl border border-zinc-800">
+                      <div className="text-center">
+                        <p className="text-[10px] font-black text-zinc-500 uppercase">Items</p>
+                        <p className="font-black text-zinc-300">{entry.itemsCount}</p>
+                      </div>
+                      <div className="w-px h-8 bg-zinc-800"></div>
+                      <div className="text-center">
+                        <p className="text-[10px] font-black text-red-400 uppercase">Alertas</p>
+                        <p className={`font-black ${entry.errorsCount > 0 ? 'text-red-400' : 'text-emerald-400'}`}>{entry.errorsCount}</p>
+                      </div>
+                    </div>
+                    <button onClick={() => { setResults(entry.data); setIsFormCollapsed(true); setActiveTab('compare'); }} className="bg-electric-blue hover:bg-electric-blue/80 text-white px-8 py-3 rounded-2xl font-bold flex justify-center items-center gap-2 transition-all shadow-lg shadow-electric-blue/20">
+                      Ver Reporte <ChevronRight size={18} />
+                    </button>
+                  </div>
+                ))}
+                {history.length === 0 && (
+                  <div className="text-center py-24 glass-card rounded-[3rem] border-zinc-800/50">
+                    <History size={64} className="mx-auto text-zinc-800 mb-6" />
+                    <p className="text-zinc-500 font-medium text-lg">No hay registros de auditoría disponibles.</p>
                   </div>
                 )}
               </div>
-            )}
+            </motion.div>
+          )}
 
-            {results && (
-              <div className="animate-in slide-in-from-bottom-4 duration-700">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                  <div className="bg-white p-5 rounded-3xl border shadow-sm flex flex-col justify-center">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total</p>
-                    <p className="text-3xl font-black text-slate-900 leading-none">{results.length}</p>
-                  </div>
-                  <div className="bg-white p-5 rounded-3xl border shadow-sm flex flex-col justify-center">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">OK Total</p>
-                    <p className="text-3xl font-black text-green-600 leading-none">{results.filter(r => !r.tieneDiferencia).length}</p>
-                  </div>
-                  <div className="bg-white p-5 rounded-3xl border shadow-sm flex flex-col justify-center border-orange-200 bg-orange-50/30">
-                    <p className="text-[10px] font-black text-orange-400 uppercase tracking-widest mb-1">Dif. Cantidad</p>
-                    <p className="text-3xl font-black text-orange-600 leading-none">{results.filter(r => r.tieneDifCant).length}</p>
-                  </div>
-                  <div className="bg-white p-5 rounded-3xl border shadow-sm flex flex-col justify-center border-red-200 bg-red-50/30">
-                    <p className="text-[10px] font-black text-red-400 uppercase tracking-widest mb-1">Dif. Precio</p>
-                    <p className="text-3xl font-black text-red-600 leading-none">{results.filter(r => r.tieneDifPrecio).length}</p>
-                  </div>
-                </div>
+          {activeTab === 'settings' && (
+            <motion.div 
+              key="settings"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="space-y-8"
+            >
+              <header>
+                <h1 className="text-4xl font-black text-white tracking-tight mb-2">Gestión de Homólogos</h1>
+                <p className="text-zinc-500">Administra las equivalencias de SKUs entre proveedores y SAP.</p>
+              </header>
 
-                <div className="bg-white rounded-[3rem] border shadow-xl overflow-hidden mb-20">
-                  <div className="p-6 md:p-8 border-b bg-slate-50 flex flex-col sm:flex-row justify-between items-center gap-4">
-                    <h2 className="text-xl md:text-2xl font-black">Detalle de Comparación</h2>
-                    <button onClick={() => exportCSV(results)} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-2xl font-bold flex items-center gap-2 shadow-md transition-all text-sm">
-                      <Download size={18} /> <span className="hidden sm:inline">Exportar Excel</span>
-                    </button>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left min-w-[900px]">
-                      <thead className="bg-slate-50 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                        <tr>
-                          <th className="px-6 py-5">Cod. SAP</th>
-                          <th className="px-6 py-5">Producto (OC / Factura)</th>
-                          <th className="px-6 py-5 text-center bg-slate-100/50">Cant. Fact</th>
-                          <th className="px-6 py-5 text-center bg-slate-100/50">Mult.</th>
-                          <th className="px-6 py-5 text-center bg-slate-100/50">Total</th>
-                          <th className="px-6 py-5 text-center bg-orange-50/50">Cant. OC</th>
-                          <th className="px-6 py-5 text-center bg-orange-50/50">Dif. Cant</th>
-                          <th className="px-6 py-5 text-right">P. Real</th>
-                          <th className="px-6 py-5 text-right">P. OC</th>
-                          <th className="px-6 py-5 text-right bg-red-50/30">Dif. Precio</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {results.map((row, i) => (
-                          <tr key={i} className={`hover:bg-slate-50 transition-colors ${row.tieneDiferencia ? 'bg-red-50/10' : ''}`}>
-                            <td className="px-6 py-5 align-top">
-                              <div className={`font-black text-sm ${row.sapSku === 'No Homologado' ? 'text-orange-600' : 'text-slate-900'}`}>{row.sapSku}</div>
-                              <div className="text-[10px] text-slate-400">Prov: {row.codProducto}</div>
-                            </td>
-                            <td className="px-6 py-5 align-top max-w-[250px]">
-                              <div className="text-[11px] font-black text-blue-800 truncate mb-1">OC: {row.nombreSap}</div>
-                              <div className="text-xs text-slate-600 leading-tight">FAC: {row.descripcion}</div>
-                            </td>
-                            
-                            <td className="px-6 py-5 text-center font-bold text-slate-500 align-middle bg-slate-50/30">{row.cantFacturaOriginal}</td>
-                            <td className="px-6 py-5 text-center align-middle bg-slate-50/30">
-                              {row.multiplicador > 1 ? (
-                                <span className="inline-flex items-center gap-1 bg-purple-100 text-purple-700 px-2 py-0.5 rounded-lg text-[10px] font-black" title={row.metodoDeteccion}>
-                                  <Zap size={12} /> x{row.multiplicador}
-                                </span>
-                              ) : <span className="text-slate-300">-</span>}
-                            </td>
-                            <td className="px-6 py-5 text-center font-black text-slate-900 align-middle bg-slate-50/30">{row.cantRealTotal}</td>
-                            
-                            <td className="px-6 py-5 text-center font-bold text-slate-600 align-middle border-l border-slate-100">{row.cantSAP}</td>
-                            <td className="px-6 py-5 text-center font-black align-middle">
-                              {row.diferenciaCantidad > 0 ? (
-                                <span className="text-red-600 bg-red-100 px-2 py-1 rounded-md text-xs">+ {row.diferenciaCantidad} (Fact. de más)</span>
-                              ) : row.diferenciaCantidad < 0 ? (
-                                <span className="text-orange-500 bg-orange-100 px-2 py-1 rounded-md text-xs">{row.diferenciaCantidad} (Pendiente env.)</span>
-                              ) : (
-                                <span className="text-green-500"><CheckCircle2 size={16} className="mx-auto" /></span>
-                              )}
-                            </td>
-
-                            <td className="px-6 py-5 text-right font-black align-middle border-l border-slate-100">
-                              ${row.precioFacturaReal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-                            </td>
-                            <td className="px-6 py-5 text-right text-slate-500 font-bold align-middle">
-                              ${row.precioOC.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-                            </td>
-                            <td className={`px-6 py-5 text-right font-black align-middle ${row.tieneDifPrecio ? 'text-red-600 bg-red-50/30' : 'text-green-600'}`}>
-                              ${row.diferenciaPrecio.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {activeTab === 'history' && (
-          <div className="animate-in slide-in-from-right-4 duration-500">
-            <h1 className="text-3xl font-black mb-8">Historial de Revisiones</h1>
-            <div className="grid gap-4">
-              {history.map(entry => (
-                <div key={entry.id} className="bg-white p-6 rounded-3xl border shadow-sm flex flex-col md:flex-row md:items-center justify-between hover:border-blue-300 transition-colors gap-4">
-                  <div>
-                    <h4 className="font-black text-slate-800 uppercase text-lg">{entry.provider}</h4>
-                    <p className="text-xs text-slate-400 font-medium">{entry.date}</p>
-                  </div>
-                  <div className="flex items-center gap-6 bg-slate-50 px-6 py-3 rounded-2xl border">
-                    <div className="text-center">
-                      <p className="text-[10px] font-black text-slate-400 uppercase">Items</p>
-                      <p className="font-black text-slate-700">{entry.itemsCount}</p>
-                    </div>
-                    <div className="w-px h-8 bg-slate-200"></div>
-                    <div className="text-center">
-                      <p className="text-[10px] font-black text-red-400 uppercase">Alertas</p>
-                      <p className={`font-black ${entry.errorsCount > 0 ? 'text-red-600' : 'text-green-600'}`}>{entry.errorsCount}</p>
-                    </div>
-                  </div>
-                  <button onClick={() => { setResults(entry.data); setIsFormCollapsed(true); setActiveTab('compare'); }} className="bg-blue-600 text-white px-6 py-3 rounded-2xl font-bold flex justify-center items-center gap-2 hover:bg-slate-900 transition-colors w-full md:w-auto">
-                    Ver Reporte <ChevronRight size={18} />
-                  </button>
-                </div>
-              ))}
-              {history.length === 0 && (
-                <div className="text-center py-20">
-                  <History size={48} className="mx-auto text-slate-300 mb-4" />
-                  <p className="text-slate-400 font-medium">Aún no has procesado ninguna validación.</p>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'settings' && (
-          <div className="animate-in slide-in-from-left-4 duration-500">
-            <header className="mb-8">
-              <h1 className="text-3xl font-black text-slate-900">Gestor de Homólogos en la Nube</h1>
-              <p className="text-slate-500">Crea bases de datos de proveedores. Puedes compartirlas con todo el equipo o hacerlas privadas.</p>
-            </header>
-
-            <div className="grid lg:grid-cols-3 gap-8">
-              <div className="lg:col-span-2 bg-white p-6 md:p-10 rounded-[3rem] border shadow-xl">
-                <h3 className="text-xl font-black mb-6 flex items-center gap-2 text-slate-800">
-                  <Plus className="text-blue-600" /> Crear Nueva Base
-                </h3>
-                
-                <div className="space-y-6">
-                  <div>
-                    <label className="text-xs font-black text-slate-400 uppercase mb-2 block tracking-widest">Nombre de la Base (Ej: COLANTA NACIONAL):</label>
-                    <input 
-                      type="text" 
-                      value={newBaseName}
-                      onChange={(e) => setNewBaseName(e.target.value)}
-                      placeholder="Identificador del proveedor..."
-                      className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-4 font-bold text-slate-800 outline-none focus:border-blue-500 transition-colors"
-                    />
-                  </div>
+              <div className="grid lg:grid-cols-3 gap-8">
+                <div className="lg:col-span-2 glass-card p-8 md:p-10 rounded-[3rem] border-zinc-800/50">
+                  <h3 className="text-xl font-black mb-8 flex items-center gap-3 text-white">
+                    <Plus className="text-electric-blue" /> Nueva Base de Datos
+                  </h3>
                   
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <label className="text-xs font-black text-slate-400 uppercase block tracking-widest">Pega datos de Excel aquí:</label>
-                      <span className="text-[10px] text-slate-400 font-bold bg-slate-100 px-2 py-1 rounded-md">Orden: SKU SAP | Nombre SAP | SKU Prov | Nombre Prov</span>
-                    </div>
-                    <textarea 
-                      rows={6}
-                      value={pasteData}
-                      onChange={(e) => setPasteData(e.target.value)}
-                      placeholder="Copia las filas desde Excel y pégalas aquí directamente..."
-                      className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-4 font-mono text-sm outline-none focus:border-blue-500 transition-colors whitespace-pre"
-                    ></textarea>
-                  </div>
-
-                  <div className="bg-blue-50/50 border border-blue-100 p-4 rounded-2xl">
-                    <p className="text-xs font-black text-slate-600 uppercase mb-3">Visibilidad de la Base de Datos</p>
-                    <div className="flex gap-4">
-                      <button 
-                        onClick={() => setIsPublicBase(true)}
-                        className={`flex-1 py-3 px-4 rounded-xl flex items-center justify-center gap-2 font-bold transition-all border-2 ${isPublicBase ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-white text-slate-500 border-slate-200 hover:border-blue-300'}`}
-                      >
-                        <Globe size={18} /> Pública (Empresa)
-                      </button>
-                      <button 
-                        onClick={() => setIsPublicBase(false)}
-                        className={`flex-1 py-3 px-4 rounded-xl flex items-center justify-center gap-2 font-bold transition-all border-2 ${!isPublicBase ? 'bg-slate-800 text-white border-slate-800 shadow-md' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-400'}`}
-                      >
-                        <Lock size={18} /> Privada (Solo yo)
-                      </button>
+                  <div className="space-y-8">
+                    <div>
+                      <label className="text-xs font-black text-zinc-500 uppercase mb-3 block tracking-widest">Nombre Identificador</label>
+                      <input 
+                        type="text" 
+                        value={newBaseName}
+                        onChange={(e) => setNewBaseName(e.target.value)}
+                        placeholder="Ej: ALPINA NACIONAL"
+                        className="w-full bg-zinc-900/50 border border-zinc-800 rounded-2xl p-4 font-bold text-white outline-none focus:border-electric-blue/50 transition-all"
+                      />
                     </div>
                     
-                    {/* 🔥 CAMPO DE CONTRASEÑA SOLO SI ES PÚBLICA 🔥 */}
-                    {isPublicBase && (
-                      <div className="mt-4 pt-4 border-t border-blue-100 animate-in fade-in slide-in-from-top-2">
-                        <label className="text-xs font-black text-blue-800 uppercase mb-2 block tracking-widest">Clave de Administrador:</label>
-                        <input 
-                          type="password" 
-                          value={adminPassword}
-                          onChange={(e) => setAdminPassword(e.target.value)}
-                          placeholder="Ingresa la clave para autorizar..."
-                          className="w-full bg-white border-2 border-blue-100 rounded-xl p-3 font-bold text-slate-800 outline-none focus:border-blue-500 transition-colors"
-                        />
-                        <p className="text-[10px] text-blue-600 mt-1 font-medium">Requerida para crear bases disponibles para toda la empresa.</p>
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <label className="text-xs font-black text-zinc-500 uppercase block tracking-widest">Importar desde Excel</label>
+                        <span className="text-[10px] text-zinc-600 font-bold bg-zinc-900 px-3 py-1 rounded-full border border-zinc-800">SKU SAP | Nombre SAP | SKU Prov | Nombre Prov</span>
                       </div>
-                    )}
-                  </div>
+                      <textarea 
+                        rows={6}
+                        value={pasteData}
+                        onChange={(e) => setPasteData(e.target.value)}
+                        placeholder="Pega las columnas aquí..."
+                        className="w-full bg-zinc-900/50 border border-zinc-800 rounded-2xl p-4 font-mono text-sm text-zinc-300 outline-none focus:border-electric-blue/50 transition-all"
+                      ></textarea>
+                    </div>
 
-                  <button 
-                    onClick={handleCreateMapping} 
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white py-5 rounded-2xl font-black text-lg flex items-center justify-center gap-3 shadow-xl shadow-blue-100 transition-all"
-                  >
-                    <Save size={20} /> Guardar Base en la Nube
-                  </button>
-                </div>
-              </div>
-
-              <div className="space-y-6">
-                <div>
-                  <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-                    <Globe size={14} /> Bases Compartidas (Empresa)
-                  </h3>
-                  {publicMappings.length === 0 ? <p className="text-xs text-slate-400 italic mb-4">No hay bases públicas aún.</p> : null}
-                  {publicMappings.map(mapping => (
-                    <div key={mapping.id} className="bg-white p-5 rounded-3xl border shadow-sm mb-3 flex items-start justify-between border-l-4 border-l-blue-500">
-                      <div>
-                        <h4 className="font-black text-slate-800">{mapping.name}</h4>
-                        <p className="text-[10px] text-slate-400 font-bold">{mapping.items.length} Productos</p>
-                      </div>
-                      {/* 🔥 EL BOTÓN DE BORRAR SOLO APARECE SI EL USUARIO ACTUAL FUE QUIEN LO CREÓ 🔥 */}
-                      {mapping.createdBy === user?.uid && (
-                        <button onClick={() => deleteMapping(mapping)} className="text-slate-300 hover:text-red-500 p-2" title="Eliminar Base">
-                          <Trash2 size={16} />
+                    <div className="bg-zinc-900/50 border border-zinc-800 p-6 rounded-3xl">
+                      <p className="text-xs font-black text-zinc-500 uppercase mb-4 tracking-widest">Visibilidad y Seguridad</p>
+                      <div className="flex gap-4 mb-6">
+                        <button 
+                          onClick={() => setIsPublicBase(true)}
+                          className={`flex-1 py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 font-bold transition-all border ${isPublicBase ? 'bg-electric-blue text-white border-electric-blue shadow-lg shadow-electric-blue/20' : 'bg-zinc-800 text-zinc-500 border-zinc-700 hover:border-zinc-500'}`}
+                        >
+                          <Globe size={18} /> Pública
                         </button>
+                        <button 
+                          onClick={() => setIsPublicBase(false)}
+                          className={`flex-1 py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 font-bold transition-all border ${!isPublicBase ? 'bg-zinc-100 text-zinc-900 border-zinc-100 shadow-lg' : 'bg-zinc-800 text-zinc-500 border-zinc-700 hover:border-zinc-500'}`}
+                        >
+                          <Lock size={18} /> Privada
+                        </button>
+                      </div>
+                      
+                      {isPublicBase && (
+                        <motion.div 
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: 'auto' }}
+                          className="space-y-3"
+                        >
+                          <label className="text-xs font-black text-electric-blue uppercase block tracking-widest">Token de Autorización</label>
+                          <input 
+                            type="password" 
+                            value={adminPassword}
+                            onChange={(e) => setAdminPassword(e.target.value)}
+                            placeholder="Clave de administrador..."
+                            className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3.5 font-bold text-white outline-none focus:border-electric-blue/50 transition-all"
+                          />
+                        </motion.div>
                       )}
                     </div>
-                  ))}
+
+                    <button 
+                      onClick={handleCreateMapping} 
+                      className="w-full animate-gradient text-white py-5 rounded-3xl font-black text-lg flex items-center justify-center gap-3 shadow-2xl transition-all"
+                    >
+                      <Save size={20} /> Guardar en la Nube
+                    </button>
+                  </div>
                 </div>
 
-                <div>
-                  <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 mt-8 flex items-center gap-2">
-                    <Lock size={14} /> Tus Bases Privadas
-                  </h3>
-                  {privateMappings.length === 0 ? <p className="text-xs text-slate-400 italic">No tienes bases privadas.</p> : null}
-                  {privateMappings.map(mapping => (
-                    <div key={mapping.id} className="bg-white p-5 rounded-3xl border shadow-sm mb-3 flex items-start justify-between border-l-4 border-l-slate-800">
-                      <div>
-                        <h4 className="font-black text-slate-800">{mapping.name}</h4>
-                        <p className="text-[10px] text-slate-400 font-bold">{mapping.items.length} Productos</p>
-                      </div>
-                      <button onClick={() => deleteMapping(mapping)} className="text-slate-300 hover:text-red-500 p-2">
-                        <Trash2 size={16} />
-                      </button>
+                <div className="space-y-8">
+                  <div className="glass-card p-6 rounded-[2.5rem] border-zinc-800/50">
+                    <h3 className="text-xs font-black text-zinc-500 uppercase tracking-widest mb-6 flex items-center gap-2">
+                      <Globe size={14} className="text-electric-blue" /> Bases Públicas
+                    </h3>
+                    <div className="space-y-3">
+                      {publicMappings.map(mapping => (
+                        <div key={mapping.id} className="bg-zinc-900/50 p-4 rounded-2xl border border-zinc-800 flex items-center justify-between group">
+                          <div>
+                            <h4 className="font-bold text-zinc-200 text-sm">{mapping.name}</h4>
+                            <p className="text-[10px] text-zinc-500 font-bold">{mapping.items.length} SKUs</p>
+                          </div>
+                          {mapping.createdBy === user?.uid && (
+                            <button onClick={() => deleteMapping(mapping)} className="text-zinc-600 hover:text-red-400 transition-colors p-2">
+                              <Trash2 size={16} />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                      {publicMappings.length === 0 && <p className="text-xs text-zinc-600 italic">No hay bases compartidas.</p>}
                     </div>
-                  ))}
+                  </div>
+
+                  <div className="glass-card p-6 rounded-[2.5rem] border-zinc-800/50">
+                    <h3 className="text-xs font-black text-zinc-500 uppercase tracking-widest mb-6 flex items-center gap-2">
+                      <Lock size={14} className="text-zinc-100" /> Bases Privadas
+                    </h3>
+                    <div className="space-y-3">
+                      {privateMappings.map(mapping => (
+                        <div key={mapping.id} className="bg-zinc-900/50 p-4 rounded-2xl border border-zinc-800 flex items-center justify-between group">
+                          <div>
+                            <h4 className="font-bold text-zinc-200 text-sm">{mapping.name}</h4>
+                            <p className="text-[10px] text-zinc-500 font-bold">{mapping.items.length} SKUs</p>
+                          </div>
+                          <button onClick={() => deleteMapping(mapping)} className="text-zinc-600 hover:text-red-400 transition-colors p-2">
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      ))}
+                      {privateMappings.length === 0 && <p className="text-xs text-zinc-600 italic">No hay bases privadas.</p>}
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
-          </div>
-        )}
-
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );
 }
+
