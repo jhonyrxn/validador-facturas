@@ -45,8 +45,11 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = 'validador-facturas'; 
 
-// --- 2. CONFIGURACIÓN DE INTELIGENCIA ARTIFICIAL (GEMINI) ---
+// --- 2. CONFIGURACIÓN DE INTELIGENCIA ARTIFICIAL Y SEGURIDAD ---
 const geminiApiKey = "AIzaSyBeqM1jz5wY9DcgL_JP8d2fHlKtN4jcikM"; 
+
+// 🔥 CAMBIA ESTA CONTRASEÑA POR LA QUE TÚ QUIERAS USAR COMO ADMINISTRADOR
+const ADMIN_SECRET = "Admin123*"; 
 
 // Datos iniciales por defecto
 const DEFAULT_MAPPINGS = [
@@ -79,6 +82,9 @@ export default function App() {
   const [newBaseName, setNewBaseName] = useState('');
   const [pasteData, setPasteData] = useState('');
   const [isPublicBase, setIsPublicBase] = useState(true);
+  
+  // Estado para la contraseña de administrador
+  const [adminPassword, setAdminPassword] = useState('');
 
   const allMappings = [...publicMappings, ...privateMappings];
 
@@ -148,6 +154,13 @@ export default function App() {
       setError("Esperando conexión al servidor de la nube...");
       return;
     }
+    
+    // 🔥 VALIDACIÓN DE ADMINISTRADOR
+    if (isPublicBase && adminPassword !== ADMIN_SECRET) {
+      setError("Clave de Administrador incorrecta. Solo el administrador puede crear bases públicas.");
+      return;
+    }
+
     if (!newBaseName.trim() || !pasteData.trim()) {
       setError("Por favor ingresa un nombre y pega los datos de Excel.");
       return;
@@ -188,8 +201,9 @@ export default function App() {
       setSelectedMappingId(mappingId);
       setNewBaseName('');
       setPasteData('');
+      setAdminPassword(''); // Limpiar contraseña tras el éxito
       setError(null);
-      alert(`¡Base de datos ${newMapping.name} guardada en la Nube!`);
+      alert(`¡Base de datos ${newMapping.name} guardada exitosamente!`);
     } catch (err) {
       console.error(err);
       setError("Hubo un error al guardar en la base de datos de la nube. Revisa las reglas de seguridad de Firestore.");
@@ -338,7 +352,7 @@ export default function App() {
   const compareData = (data, mappingItems) => {
     const { factura = [], ordenCompra = [] } = data;
     
-    // Función auxiliar para limpiar códigos (quita espacios, saltos de línea y ceros a la izquierda)
+    // Función auxiliar para limpiar códigos
     const cleanSKU = (sku) => {
       const s = String(sku || "").trim().toUpperCase().replace(/\s+/g, '').replace(/^0+/, '');
       return s === "" ? "0" : s;
@@ -347,16 +361,13 @@ export default function App() {
     return factura.map(itemProv => {
       const cleanProv = cleanSKU(itemProv.codProducto);
       
-      // 1. Buscar coincidencia normal
       let mapping = mappingItems.find(m => cleanSKU(m.prov) === cleanProv);
       let sapSku = mapping ? mapping.sap : null;
       
-      // 2. Búsqueda Bidireccional (Fallback si pegaron columnas al revés o la factura trae el SAP)
       if (!mapping) {
         const mapBySap = mappingItems.find(m => cleanSKU(m.sap) === cleanProv);
         if (mapBySap) {
           mapping = mapBySap;
-          // Si encontramos el código invertido, cruzamos con la OC para ver cuál asignar
           const existsProvInOC = ordenCompra.some(oc => cleanSKU(oc.codSap) === cleanSKU(mapBySap.prov));
           sapSku = existsProvInOC ? mapBySap.prov : mapBySap.sap;
         }
@@ -376,35 +387,29 @@ export default function App() {
       let multiplicador = 1;
       let metodoDeteccion = "Directo";
 
-      // 1. Calculamos el precio directo sin alteraciones
       const pFacturaDirecto = (bruto - desc) / cantFactura;
 
       if (itemPo) {
         const diffPrecioDirecto = Math.abs(pFacturaDirecto - pSAP);
         
-        // REGLA DE ORO: Si el precio unitario directo ya coincide con SAP, NO forzamos multiplicadores
         if (diffPrecioDirecto <= 10) {
           multiplicador = 1;
           metodoDeteccion = "Directo";
         } else {
-          // 2. Si el precio base difiere, analizamos matemáticamente si se trata de un empaque múltiple
           const matchTexto = String(itemProv.descripcion).match(/[xX]\s*(\d+)/);
           const multTexto = (matchTexto && parseInt(matchTexto[1], 10) > 1) ? parseInt(matchTexto[1], 10) : 1;
           
           const precioInferidoTexto = multTexto > 1 ? (bruto - desc) / (cantFactura * multTexto) : pFacturaDirecto;
           const precioInferidoMatematico = cantSAP > 0 ? (bruto - desc) / cantSAP : pFacturaDirecto;
           
-          // Prioridad A: La cantidad de SAP resuelve perfectamente la ecuación del precio
           if (cantSAP > cantFactura && Math.abs(precioInferidoMatematico - pSAP) <= 10) {
             multiplicador = cantSAP / cantFactura;
             metodoDeteccion = `Inferencia Matemática (Equivalente x${multiplicador})`;
           }
-          // Prioridad B: El texto (ej. x12) extraído resuelve la ecuación del precio
           else if (multTexto > 1 && Math.abs(precioInferidoTexto - pSAP) <= 10) {
             multiplicador = multTexto;
             metodoDeteccion = `Texto Validado por Precio (Caja x${multiplicador})`;
           }
-          // Prioridad C: El texto arregla la cantidad pedida (por si el precio subió, pero la cantidad enviada cuadra en cajas)
           else if (multTexto > 1 && Math.abs((cantFactura * multTexto) - cantSAP) < Math.abs(cantFactura - cantSAP)) {
             multiplicador = multTexto;
             metodoDeteccion = `Texto Validado por Cantidad (Caja x${multiplicador})`;
@@ -779,6 +784,21 @@ export default function App() {
                         <Lock size={18} /> Privada (Solo yo)
                       </button>
                     </div>
+                    
+                    {/* 🔥 CAMPO DE CONTRASEÑA SOLO SI ES PÚBLICA 🔥 */}
+                    {isPublicBase && (
+                      <div className="mt-4 pt-4 border-t border-blue-100 animate-in fade-in slide-in-from-top-2">
+                        <label className="text-xs font-black text-blue-800 uppercase mb-2 block tracking-widest">Clave de Administrador:</label>
+                        <input 
+                          type="password" 
+                          value={adminPassword}
+                          onChange={(e) => setAdminPassword(e.target.value)}
+                          placeholder="Ingresa la clave para autorizar..."
+                          className="w-full bg-white border-2 border-blue-100 rounded-xl p-3 font-bold text-slate-800 outline-none focus:border-blue-500 transition-colors"
+                        />
+                        <p className="text-[10px] text-blue-600 mt-1 font-medium">Requerida para crear bases disponibles para toda la empresa.</p>
+                      </div>
+                    )}
                   </div>
 
                   <button 
@@ -802,9 +822,12 @@ export default function App() {
                         <h4 className="font-black text-slate-800">{mapping.name}</h4>
                         <p className="text-[10px] text-slate-400 font-bold">{mapping.items.length} Productos</p>
                       </div>
-                      <button onClick={() => deleteMapping(mapping)} className="text-slate-300 hover:text-red-500 p-2">
-                        <Trash2 size={16} />
-                      </button>
+                      {/* 🔥 EL BOTÓN DE BORRAR SOLO APARECE SI EL USUARIO ACTUAL FUE QUIEN LO CREÓ 🔥 */}
+                      {mapping.createdBy === user?.uid && (
+                        <button onClick={() => deleteMapping(mapping)} className="text-slate-300 hover:text-red-500 p-2" title="Eliminar Base">
+                          <Trash2 size={16} />
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>
